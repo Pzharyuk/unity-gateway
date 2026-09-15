@@ -16,7 +16,7 @@ import uuid
 import pexpect
 import pyte
 
-from .evidence import agent_sessions
+from .evidence import agent_sessions, assert_no_terminal_api_error
 
 
 class TerminalScreen(pyte.Screen):
@@ -282,8 +282,36 @@ class AgentTerminal(TerminalProcess):
         self.exit_normally()
 
     def wait_for_task(self, task, timeout=180):
+        permission_in_progress = False
+
+        def completed(screen):
+            nonlocal permission_in_progress
+            assert_no_terminal_api_error(screen)
+            if "Do you want to proceed?" in screen:
+                if permission_in_progress:
+                    return False
+                # A routed Claude child may locate the fixture from the
+                # disposable project root before reading it. Interact with
+                # that real permission dialog, but never approve a broader or
+                # mutating command just because a model requested it.
+                project_root = re.escape(str(self.session.cwd.parent))
+                filename = re.escape(task.filename)
+                safe_find = re.search(
+                    rf'(?m)^\s*find {project_root} -name ["\']{filename}["\'] 2>/dev/null\s*$',
+                    screen,
+                )
+                first_yes = re.search(r"(?m)^\s*[›❯>]\s*1\.\s*Yes\s*$", screen)
+                assert self.agent == "claude" and safe_find and first_yes, (
+                    "Agent requested an unrecognized tool permission:\n" + screen
+                )
+                self.send("\r", f"allow read-only search for {task.filename}")
+                permission_in_progress = True
+                return False
+            permission_in_progress = False
+            return task.completed(self.session, self.agent)
+
         self.wait_for(
-            lambda text: task.completed(self.session, self.agent),
+            completed,
             "a completed assistant answer with the file's value",
             timeout=timeout,
         )

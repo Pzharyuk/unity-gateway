@@ -7,6 +7,7 @@ from utils.terminal import AgentTerminal, ConfigureTerminal
 pytestmark = [pytest.mark.live, pytest.mark.tui, pytest.mark.codex]
 
 
+@pytest.mark.smoke
 def test_ug_configure_codex_databricks(live_session, workspace):
     """Scenario: configure Codex with Databricks Hosted and use its TUI.
 
@@ -42,11 +43,14 @@ def test_ug_configure_codex_databricks(live_session, workspace):
         tui.check_input_and_exit()
 
 
-def test_ug_configure_codex_openai_mps(live_session, workspace, codex_provider):
+def test_ug_configure_codex_openai_mps(
+    live_session, workspace, codex_provider, codex_provider_model
+):
     """Scenario: choose the real OpenAI MPS in ug configure's provider picker.
 
     Expected: ug saves that provider, and launching Codex without --provider
-    uses the saved choice to complete a file-reading task and exit normally.
+    uses the saved choice with one of its allowed models to complete a
+    file-reading task and exit normally.
     """
     session = live_session
     task = FileTask(session)
@@ -67,7 +71,8 @@ def test_ug_configure_codex_openai_mps(live_session, workspace, codex_provider):
     assert session.workspace_state()["provider_services"]["codex"] == codex_provider
     assert codex_provider in session.run("status").stdout
 
-    with AgentTerminal(session, "codex", [str(session.binary), "codex"], "provider-session") as tui:
+    command = [str(session.binary), "codex", "--", "--model", codex_provider_model]
+    with AgentTerminal(session, "codex", command, "provider-session") as tui:
         tui.boot()
         tui.submit(task.prompt)
         tui.wait_for_task(task, timeout=300)

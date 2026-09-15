@@ -57,9 +57,7 @@ def exact_npm_version(value: str) -> str:
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group()
-    source.add_argument(
-        "--ug-version", default="checkout", help="Exact ucode release, or checkout."
-    )
+    source.add_argument("--ug-version", default="checkout", help="Exact ug release, or checkout.")
     source.add_argument(
         "--ug-wheel", type=Path, help="Previously built wheel to reproduce a release."
     )
@@ -77,6 +75,11 @@ def arguments():
         "--codex-provider",
         default="main.ucode.ci_openai_mps",
         help="Existing OpenAI MPS selected in the configure CUJ.",
+    )
+    parser.add_argument(
+        "--codex-provider-model",
+        default="gpt-5-nano",
+        help="Model allowed by the OpenAI MPS selected in the configure CUJ.",
     )
     parser.add_argument("--python", default=sys.executable, help="Python 3.12+ path or uv version.")
     parser.add_argument("--dependency", action="append", default=[], metavar="PACKAGE==VERSION")
@@ -238,6 +241,7 @@ def main() -> int:
             "codex_model": args.codex_model,
             "claude_provider": args.claude_provider,
             "codex_provider": args.codex_provider,
+            "codex_provider_model": args.codex_provider_model,
             "dependencies": args.dependency,
             "workspace": args.workspace,
         },
@@ -461,6 +465,7 @@ def main() -> int:
                 "UG_INTEGRATION_AGENTS": ",".join(agents),
                 "UG_INTEGRATION_CLAUDE_PROVIDER": args.claude_provider,
                 "UG_INTEGRATION_CODEX_PROVIDER": args.codex_provider,
+                "UG_INTEGRATION_CODEX_PROVIDER_MODEL": args.codex_provider_model,
                 "UCODE_TEST_WORKSPACE": args.workspace or "",
                 "DATABRICKS_BEARER": bearer,
             }

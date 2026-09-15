@@ -25,12 +25,6 @@ All tests live directly in `integration/`; shared mechanics live in `utils/`.
 | `test_ug_configure_claude_anthropic_mps` | Select Anthropic MPS in the real configure picker; launch Claude | Saved provider in status; completed TUI file task; normal exit |
 | `test_ug_configure_codex_databricks` | Configure Databricks Hosted; open Codex TUI and read a file | Completed assistant answer contains the file value; normal exit and reopen |
 | `test_ug_configure_codex_openai_mps` | Select OpenAI MPS in the real configure picker; launch Codex | Saved provider in status; completed TUI file task; normal exit |
-| `test_smart_routing_claude_first_prompt` | Enable routing and type the first TUI prompt | Real routing decision and replay; completed task; no routing before submission; reopen |
-| `test_smart_routing_codex_first_prompt` | Enable routing and type the first TUI prompt | Real routing decision; completed task; no fallback or routing before submission; reopen |
-| `test_smart_routing_claude_subagent` | Delegate a file-reading task | Child answer, correlated routing decision/child start, parent answer |
-| `test_smart_routing_codex_subagent` | Delegate a file-reading task | Native child-parent linkage; completed child turn uses the routed model; parent answer |
-| `test_smart_routing_claude_explicit_model_bypasses_routing` | Launch TUI with an explicit model and routing enabled | Completed task, no routing wrapper, normal exit and reopen |
-| `test_smart_routing_codex_explicit_model_bypasses_routing` | Launch TUI with an explicit model and routing enabled | Completed task, no routing wrapper, normal exit and reopen |
 | `test_ug_claude_headless_prompt_argument`, `test_ug_claude_headless_prompt_stdin`, `test_ug_claude_headless_prompt_after_separator` | Run Claude from a script using each prompt form | Structured final answer contains the file value; exit zero; no routing |
 | `test_ug_codex_headless_prompt_argument`, `test_ug_codex_headless_prompt_stdin`, `test_ug_codex_headless_prompt_after_separator` | Run Codex from a script using each prompt form | Completed turn and final answer contain the file value; exit zero; no routing |
 | `test_ug_claude_headless_explicit_model_bypasses_routing` | Pass `--model VALUE` / `--model=VALUE` with routing enabled | Real file task completes; no routing wrapper |
@@ -47,10 +41,10 @@ All tests live directly in `integration/`; shared mechanics live in `utils/`.
 | `test_ug_status_in_fresh_home_is_unconfigured` | Request status before configure | Unconfigured status |
 | `test_ug_auth_without_configuration_explains_how_to_configure` | Request auth before configure | Actionable setup error and nonzero exit |
 
-With both agents selected there are **45 live cases** (10 interactive TUI cases)
+With both agents selected there are **39 live cases** (4 interactive TUI cases)
 and **3 installation checks**. Parametrization varies argument spelling or routing
 mode, never hides the agent/provider in the test name. Duplicate boot-only cases
-were merged into the Databricks, first-prompt, and explicit-model TUI journeys.
+are incorporated into the Databricks configuration TUI journeys.
 Generated-file cleanup and strict app-server stdout assertions remain enforced.
 
 Provider configuration tests include ug's normal validation. Other setup uses
@@ -60,11 +54,32 @@ optional Databricks AI Tools. Help forwarding does not claim MCP functionality.
 
 Fresh consumer dependency resolution covers the install path behind #496, rather
 than consuming `uv.lock`. Use `--dependency PACKAGE==VERSION` or replay the archived
-dependency graph to reproduce a user's combination.
+dependency graph to reproduce a user's combination. Every relevant same-repository
+PR and push to `main` runs both smoke and the full CUJ suite. Smoke covers the
+Databricks Hosted configure/TUI and headless argument journeys for both agents,
+in two parallel jobs. After smoke finishes, the full suite runs all 39 cases
+across six serial jobs: Claude/Codex × configure, headless, and other
+commands/lifecycle checks. CI calls integration after the existing e2e shards
+finish, including when an e2e shard fails, to avoid overlapping their model load.
+The `All integration tests` check requires every selected integration job to pass; full coverage
+does not depend on a label or a manual request.
 
-Run all live journeys with explicit agent versions through
-`scripts/run_integration.py`. The separate integration workflow is not configured
-in this checkout; collection and package checks do not count as live passes.
+The existing e2e workflow runs seven parallel shards: gateway checks plus one for
+each of Claude, Codex, Gemini, OpenCode, Copilot, and Pi. Each agent shard installs
+its own CLI. Configure-subset checks run in the Claude shard because configuration
+invokes the Claude CLI. The Claude shard also runs the existing tracing test file, whose
+pre-existing skip remains in place. The `All agent tests` check requires every shard to pass.
+Check names describe the coverage: `Unit tests`, `Gateway API tests`,
+`Agent launch tests · Claude`, `Smoke journeys · Claude`, and
+`Full journeys · Claude · Configure` (with the other agents/groups named likewise).
+Unit tests still run as one job. Both matrices use `fail-fast: false` so one
+failure does not cancel other coverage.
+
+The small `test` and `e2e` compatibility gates retain the exact status contexts
+required by the repository's branch rules. `test` requires `Unit tests`; `e2e`
+requires both `All agent tests` and the complete integration workflow. A failed
+or skipped dependency fails the gate, and a running integration suite keeps it
+pending. The descriptive jobs provide the actual coverage and diagnostics.
 
 ## Gaps and deferred scope
 
@@ -75,7 +90,7 @@ in this checkout; collection and package checks do not count as live passes.
 | Provider switching, relayed/subscription MPS | Not covered by the four provider journeys |
 | TUI initial prompt supplied on the launch command line | Not yet covered; headless prompt arguments are covered |
 | Follow-up turns and conversation resume | Not covered; reopen proves startup, not conversation resume |
-| Claude child model identity | Verified only when the actual start event reports it; missing fields remain unknown |
+| Claude/Codex interactive smart routing | Deferred at the user's request; routing jobs and live journeys removed. Unit/component routing tests remain, but do not establish live routing behavior. |
 | Full allow/deny tool-permission matrix | Not covered; onboarding/trust uses actual TUI choices |
 | Desktop Codex app, Isaac itself, auto-upgrades | Not covered by command forwarding or pinned-version tests |
 | Native macOS/Windows managed settings, resize/signals | Separate platform coverage needed |
