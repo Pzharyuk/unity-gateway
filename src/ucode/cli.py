@@ -1028,9 +1028,9 @@ app.add_typer(skill_app, name="skill", help="Databricks Skills for your coding t
 
 def _version_callback(value: bool) -> None:
     if value:
-        from ucode.telemetry import ucode_version
+        from ucode.telemetry import ug_version
 
-        print(ucode_version())
+        print(ug_version())
         raise typer.Exit()
 
 
@@ -3321,9 +3321,8 @@ def _installed_cli_distribution() -> str:
             continue
         return distribution_name
     # Source checkouts and unusual installers may expose neither distribution.
-    # The distribution remains named ucode until the Phase 3 cutover, so use the
-    # non-destructive legacy upgrade path and let uv report an actionable error.
-    return "ucode"
+    # Use the current distribution name and let uv report an actionable error.
+    return "unity-gateway"
 
 
 def _is_distribution_cutover(result: subprocess.CompletedProcess[str]) -> bool:

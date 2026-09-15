@@ -163,12 +163,13 @@ class TestUpgrade:
     def _requirement(distribution: str) -> str:
         return f"{distribution} @ git+https://github.com/databricks/unity-gateway"
 
-    def test_before_cutover_upgrades_ucode_normally_without_verification(self):
+    @pytest.mark.parametrize("prog_name", ["ug", "ucode"])
+    def test_before_cutover_upgrades_ucode_normally_without_verification(self, prog_name):
         with (
             patch("ucode.cli._installed_cli_distribution", return_value="ucode"),
             patch("subprocess.run", return_value=self._ok()) as run,
         ):
-            result = runner.invoke(app, ["upgrade"])
+            result = runner.invoke(app, ["upgrade"], prog_name=prog_name)
 
         assert result.exit_code == 0, result.output
         assert run.call_args_list == [
@@ -181,7 +182,8 @@ class TestUpgrade:
         ]
         assert "ucode upgraded" in result.output
 
-    def test_cutover_migrates_legacy_distribution_and_verifies_commands(self):
+    @pytest.mark.parametrize("prog_name", ["ug", "ucode"])
+    def test_cutover_migrates_legacy_distribution_and_verifies_commands(self, prog_name):
         git_url = "git+https://github.com/databricks/unity-gateway"
         rename_failure = subprocess.CompletedProcess(
             [],
@@ -203,7 +205,7 @@ class TestUpgrade:
                 ],
             ) as run,
         ):
-            result = runner.invoke(app, ["upgrade"])
+            result = runner.invoke(app, ["upgrade"], prog_name=prog_name)
 
         assert result.exit_code == 0, result.output
         assert run.call_args_list == [
@@ -230,12 +232,13 @@ class TestUpgrade:
         ]
         assert "Migrated to `unity-gateway`" in result.output
 
-    def test_after_cutover_upgrades_unity_gateway_normally_without_verification(self):
+    @pytest.mark.parametrize("prog_name", ["ug", "ucode"])
+    def test_after_cutover_upgrades_unity_gateway_normally_without_verification(self, prog_name):
         with (
             patch("ucode.cli._installed_cli_distribution", return_value="unity-gateway"),
             patch("subprocess.run", return_value=self._ok()) as run,
         ):
-            result = runner.invoke(app, ["upgrade"])
+            result = runner.invoke(app, ["upgrade"], prog_name=prog_name)
 
         assert result.exit_code == 0, result.output
         run.assert_called_once_with(
@@ -345,6 +348,10 @@ class TestUpgrade:
 
             assert _installed_cli_distribution() == "ucode"
 
+    def test_source_checkout_without_metadata_uses_current_distribution(self):
+        with patch("ucode.cli.metadata.version", side_effect=metadata.PackageNotFoundError):
+            assert cli_mod._installed_cli_distribution() == "unity-gateway"
+
 
 class TestVersion:
     @pytest.mark.parametrize("flag", ["--version", "-V"])
@@ -356,11 +363,11 @@ class TestVersion:
         assert _strip_ansi(result.output).strip() != ""
 
     def test_matches_telemetry_version(self):
-        from ucode.telemetry import ucode_version
+        from ucode.telemetry import ug_version
 
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
-        assert ucode_version() in _strip_ansi(result.output)
+        assert ug_version() in _strip_ansi(result.output)
 
 
 def _patch_launch(tool: str):

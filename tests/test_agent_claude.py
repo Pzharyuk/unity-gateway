@@ -18,7 +18,7 @@ from ucode.state import MANAGED_OVERLAY_KEY
 
 WS = "https://example.databricks.com"
 # A connection MCP proxy argv, used by the Claude MCP-registration helper tests.
-# The leading element is the resolved `ucode` binary path, so tests assert the tail.
+# The leading element is the resolved `ug` binary path, so tests assert the tail.
 GH_URL = f"{WS}/api/2.0/mcp/external/github"
 
 
@@ -227,15 +227,15 @@ class TestRenderOverlay:
 
         assert claude.gateway_model_discovery_setting_is_absent() is False
 
-    def test_sets_api_key_helper(self):
+    def test_sets_api_key_helper(self, monkeypatch):
+        monkeypatch.setattr("ucode.databricks.shutil.which", lambda command: f"/my tools/{command}")
         overlay, _ = claude.render_overlay(WS, "s4")
-        assert "apiKeyHelper" in overlay
-        assert WS in overlay["apiKeyHelper"]
+        assert shlex.split(overlay["apiKeyHelper"]) == ["/my tools/ug", "auth-token", "--host", WS]
 
     def test_sets_custom_oauth_api_key_helper(self, monkeypatch):
         from ucode import custom_oauth
 
-        monkeypatch.setattr("ucode.databricks._ucode_binary", lambda: "/opt/ucode")
+        monkeypatch.setattr("ucode.databricks.ug_binary", lambda: "/opt/ug")
         monkeypatch.setattr(custom_oauth.platform, "system", lambda: "Linux")
         overlay, _ = claude.render_overlay(
             WS,
@@ -247,7 +247,7 @@ class TestRenderOverlay:
             },
         )
         assert shlex.split(overlay["apiKeyHelper"]) == [
-            "/opt/ucode",
+            "/opt/ug",
             "auth-token",
             "--host",
             WS,
@@ -450,7 +450,7 @@ class TestRenderOverlay:
 
 class TestRenderOverlayUserAgent:
     def _ua(self, monkeypatch) -> str:
-        monkeypatch.setattr(claude, "ucode_version", lambda: "0.1.0")
+        monkeypatch.setattr(claude, "ug_version", lambda: "0.1.0")
         monkeypatch.setattr(claude, "agent_version", lambda binary: "2.1.136")
         overlay, _ = claude.render_overlay(WS, "s4")
         return overlay["env"]["ANTHROPIC_CUSTOM_HEADERS"]
@@ -551,13 +551,14 @@ class TestRenderOverlayWebSearchDisable:
 
 
 class TestWebSearchMcpEntry:
-    def test_entry_shape(self):
+    def test_entry_shape(self, monkeypatch):
+        monkeypatch.setattr("ucode.databricks.shutil.which", lambda command: f"/tools/{command}")
         entry = claude._web_search_mcp_entry(WS, "databricks-gpt-5")
         assert entry["type"] == "stdio"
         assert entry["args"] == ["mcp", "web-search"]
         assert entry["env"]["DATABRICKS_HOST"] == WS
         assert entry["env"]["UCODE_WEB_SEARCH_MODEL"] == "databricks-gpt-5"
-        assert isinstance(entry["command"], str) and entry["command"]
+        assert entry["command"] == "/tools/ug"
 
 
 class TestResolveWebSearchModel:
@@ -856,7 +857,7 @@ class TestWriteToolConfigManagedSettings:
             }
         }
         self._patch(monkeypatch, private_writes, managed_writes, existing_managed_settings)
-        monkeypatch.setattr(claude, "ucode_version", lambda: "1.0")
+        monkeypatch.setattr(claude, "ug_version", lambda: "1.0")
         monkeypatch.setattr(claude, "agent_version", lambda _binary: "2.0")
         state = {"workspace": WS, "codex_models": []}
 
@@ -1193,6 +1194,19 @@ class TestRemoveClaudeMcpServer:
 
 
 class TestRegisterWebSearchMcp:
+    def test_legacy_ucode_command_requires_reregistration(self, monkeypatch):
+        monkeypatch.setattr("ucode.databricks.shutil.which", lambda command: f"/tools/{command}")
+        entry = claude._web_search_mcp_entry(WS, "m", "profile")
+        legacy_entry = {**entry, "command": "/tools/ucode"}
+        state = {claude.WEB_SEARCH_MCP_STATE_KEY: legacy_entry}
+        monkeypatch.setattr(
+            claude,
+            "read_json_safe",
+            lambda path: {"mcpServers": {claude.WEB_SEARCH_MCP_NAME: legacy_entry}},
+        )
+
+        assert claude._web_search_mcp_is_current(state, entry) is False
+
     def test_skips_registration_when_entry_is_current(self, monkeypatch):
         entry = claude._web_search_mcp_entry(WS, "m", "profile")
         state = {claude.WEB_SEARCH_MCP_STATE_KEY: entry}

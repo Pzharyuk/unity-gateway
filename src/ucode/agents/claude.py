@@ -36,6 +36,7 @@ from ucode.databricks import (
     build_auth_shell_command,
     build_tool_base_url,
     get_databricks_token,
+    ug_binary,
 )
 from ucode.launcher import exec_or_spawn
 from ucode.managed_files import (
@@ -58,7 +59,7 @@ from ucode.smart_routing.claude_hooks import (
     sync_smart_routing_hooks,
 )
 from ucode.state import MANAGED_OVERLAY_KEY, is_tool_managed, mark_tool_managed, save_state
-from ucode.telemetry import agent_version, ucode_version
+from ucode.telemetry import agent_version, ug_version
 from ucode.tracing import tracing_env
 from ucode.ui import print_note, print_success, print_warning
 
@@ -299,10 +300,9 @@ def relayed_proxy_base_url(state: dict) -> str:
 
 
 def _web_search_mcp_entry(workspace: str, search_model: str, profile: str | None = None) -> dict:
-    """Stdio MCP server entry pointing at `ucode mcp web-search`. Resolves
-    the absolute path to the `ucode` binary so launchers without the right
+    """Stdio MCP server entry pointing at `ug mcp web-search`. Resolves
+    the absolute path to the `ug` binary so launchers without the right
     PATH (e.g. desktop GUI launchers) still find it."""
-    ucode_binary = shutil.which("ucode") or "ucode"
     env: dict[str, str] = {
         "DATABRICKS_HOST": workspace,
         "UCODE_WEB_SEARCH_MODEL": search_model,
@@ -311,7 +311,7 @@ def _web_search_mcp_entry(workspace: str, search_model: str, profile: str | None
         env["DATABRICKS_CONFIG_PROFILE"] = profile
     return {
         "type": "stdio",
-        "command": ucode_binary,
+        "command": ug_binary(),
         "args": ["mcp", "web-search"],
         "env": env,
     }
@@ -365,7 +365,7 @@ def render_overlay(
     # traffic to ucode.
     header_lines = [
         "x-databricks-use-coding-agent-mode: true",
-        f"User-Agent: ucode/{ucode_version()} claude/{agent_version('claude')}",
+        f"User-Agent: ucode/{ug_version()} claude/{agent_version('claude')}",
     ]
     if provider:
         header_lines.append(f"{MODEL_PROVIDER_SERVICE_HEADER}: {provider}")
@@ -505,7 +505,7 @@ def add_claude_mcp_server(
     always_load: bool = False,
 ) -> None:
     # Three registration shapes share this helper. The plain proxy path passes an
-    # argv list (`ucode mcp-proxy ...`), registered via `claude mcp add ... -- <argv>`
+    # argv list (`ug mcp-proxy ...`), registered via `claude mcp add ... -- <argv>`
     # where `--` fences the proxy's own flags off from claude's parser. The
     # web_search server passes a full stdio entry dict with its own env, which only
     # `add-json` can express — so a dict routes there. Finally, `always_load` (the

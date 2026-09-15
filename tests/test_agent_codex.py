@@ -89,12 +89,13 @@ class TestRenderOverlay:
         provider = overlay["model_providers"]["Databricks"]
         assert provider["wire_api"] == "responses"
 
-    def test_auth_runs_ucode_auth_token(self):
-        # The auth command runs the `ucode auth-token` executable directly
+    def test_auth_runs_ug_auth_token(self, monkeypatch):
+        # The auth command runs the `ug auth-token` executable directly
         # (not `sh -c`), so it works on Windows where there is no POSIX shell.
+        monkeypatch.setattr("ucode.databricks.shutil.which", lambda command: f"/tools/{command}")
         overlay = codex.render_overlay(WS)
         auth = overlay["model_providers"]["Databricks"]["auth"]
-        assert auth["command"].endswith("ucode") or auth["command"] == "ucode"
+        assert auth["command"] == "/tools/ug"
         assert auth["args"][0] == "auth-token"
         assert auth["command"] != "sh"
 
@@ -168,7 +169,7 @@ class TestRenderOverlay:
 
 class TestRenderOverlayUserAgent:
     def test_user_agent_set_on_provider(self, monkeypatch):
-        monkeypatch.setattr(codex, "ucode_version", lambda: "0.1.0")
+        monkeypatch.setattr(codex, "ug_version", lambda: "0.1.0")
         monkeypatch.setattr(codex, "agent_version", lambda binary: "0.123.0")
         overlay = codex.render_overlay(WS)
         provider = overlay["model_providers"]["Databricks"]
