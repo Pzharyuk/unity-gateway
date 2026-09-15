@@ -1,6 +1,7 @@
 """CUJs for using codex from scripts through installed ug."""
 
 import pytest
+from utils.constants import CODEX_TEST_MODEL
 from utils.evidence import FileTask
 
 pytestmark = [pytest.mark.live, pytest.mark.codex]
@@ -27,7 +28,15 @@ def test_ug_codex_headless_prompt_argument(live_session, workspace):
     )
 
     result = session.run(
-        "codex", "--", "exec", "--skip-git-repo-check", "--json", task.prompt, timeout=180
+        "codex",
+        "--",
+        "exec",
+        "--skip-git-repo-check",
+        "--json",
+        "--model",
+        CODEX_TEST_MODEL,
+        task.prompt,
+        timeout=180,
     )
     task.assert_headless_answer("codex", result)
     session.assert_not_routed()
@@ -58,6 +67,8 @@ def test_ug_codex_headless_prompt_stdin(live_session, workspace):
         "exec",
         "--skip-git-repo-check",
         "--json",
+        "--model",
+        CODEX_TEST_MODEL,
         "-",
         timeout=180,
         input_text=task.prompt + "\n",
@@ -86,7 +97,16 @@ def test_ug_codex_headless_prompt_after_separator(live_session, workspace):
     )
 
     result = session.run(
-        "codex", "--", "exec", "--skip-git-repo-check", "--json", "--", task.prompt, timeout=180
+        "codex",
+        "--",
+        "exec",
+        "--skip-git-repo-check",
+        "--json",
+        "--model",
+        CODEX_TEST_MODEL,
+        "--",
+        task.prompt,
+        timeout=180,
     )
     task.assert_headless_answer("codex", result)
     session.assert_not_routed()
