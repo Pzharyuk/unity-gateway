@@ -130,6 +130,22 @@ class TestQueries:
         assert len(skills_state.records_for_schema("main.default", base=str(proj))) == 1
         assert skills_state.records_for_schema("ml.prod")[0]["fqn"] == "ml.prod.pii"
 
+    def test_records_for_fqns_filters_by_exact_name_and_base(self, tmp_path):
+        home, proj = tmp_path / "home", tmp_path / "proj"
+        skills_state.record_downloads(
+            [
+                _install(home, "main.default.triage", "triage"),
+                _install(proj, "main.default.triage", "triage"),
+                _install(home, "ml.prod.pii", "pii"),
+            ]
+        )
+
+        picked = skills_state.records_for_fqns({"main.default.triage", "ml.prod.pii"})
+        assert {r["fqn"] for r in picked} == {"main.default.triage", "ml.prod.pii"}
+        assert len(picked) == 3
+        assert len(skills_state.records_for_fqns({"main.default.triage"}, base=str(proj))) == 1
+        assert skills_state.records_for_fqns({"nope.nope.nope"}) == []
+
     def test_forget_drops_only_named_records(self, tmp_path):
         home = tmp_path / "home"
         keep = _install(home, "ml.prod.pii", "pii")
@@ -179,3 +195,60 @@ class TestReconciliation:
         records = skills_state.list_downloaded()
         assert [r["fqn"] for r in records] == ["ml.prod.new"]
         assert Path(existing.dirs[0]).exists()
+
+
+class TestRemoveDownloads:
+    def test_deletes_dirs_and_drops_records(self, tmp_path):
+        base = tmp_path / "proj"
+        keep = _install(base, "ml.prod.pii", "pii")
+        drop = _install(base, "main.default.triage", "triage")
+        _write_dirs(keep)
+        _write_dirs(drop)
+        skills_state.record_downloads([keep, drop])
+
+        skills_state.remove_downloads(skills_state.records_for_schema("main.default"))
+
+        assert [r["fqn"] for r in skills_state.list_downloaded()] == ["ml.prod.pii"]
+        assert not Path(drop.dirs[0]).exists()
+        assert Path(keep.dirs[0]).exists()
+
+    def test_empty_is_a_noop(self):
+        skills_state.remove_downloads([])
+        assert skills_state.list_downloaded() == []
+
+    def test_symlinked_dir_is_unlinked_not_its_target(self, tmp_path):
+        base = tmp_path / "proj"
+        install = _install(base, "main.default.triage", "triage")
+        target = tmp_path / "real-skill"
+        target.mkdir()
+        (target / "SKILL.md").write_text("bundle")
+        link_dir = Path(install.dirs[0])
+        link_dir.parent.mkdir(parents=True, exist_ok=True)
+        link_dir.symlink_to(target)
+        Path(install.dirs[1]).mkdir(parents=True, exist_ok=True)
+        skills_state.record_downloads([install])
+
+        skills_state.remove_downloads(skills_state.records_for_schema("main.default"))
+
+        assert not link_dir.is_symlink() and not link_dir.exists()
+        assert target.exists()
+        assert skills_state.list_downloaded() == []
+
+    def test_warns_on_undeletable_dir(self, tmp_path, monkeypatch):
+        base = tmp_path / "proj"
+        install = _install(base, "main.default.triage", "triage")
+        _write_dirs(install)
+        skills_state.record_downloads([install])
+
+        def boom(path):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(skills_state.shutil, "rmtree", boom)
+        warnings: list[str] = []
+        monkeypatch.setattr(skills_state, "print_warning", warnings.append)
+
+        skills_state.remove_downloads(skills_state.records_for_schema("main.default"))
+
+        assert len(warnings) == 1
+        assert install.dirs[0] in warnings[0]
+        assert skills_state.list_downloaded() == []
