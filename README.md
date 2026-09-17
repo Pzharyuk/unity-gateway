@@ -254,6 +254,26 @@ ug mcp remove --agents codex
 It shows the servers you currently have configured — each with the coding tools it's registered
 on — and removes the ones you select from those tools. It needs no Databricks login.
 
+#### List configured servers and their connection status
+
+To see the Databricks MCP servers `ug` has configured and whether each coding agent is currently
+connected to them, use `ug mcp list`:
+
+```bash
+ug mcp list
+
+# Limit the report to specific agents.
+ug mcp list --agents claude,codex
+```
+
+It prints one row per configured server — `NAME`, `LOCATION`, `AGENTS`, and a `STATUS` aggregated
+from each agent's own `mcp list` (connected/failed; Codex reports `enabled`/`disabled`, since its
+listing does not health-check). When agents disagree, `STATUS` splits into `agent:state`.
+Workspace-managed servers are tagged, and any servers an agent lists that `ug` didn't configure are
+summarized as a per-agent count. Skills connections are managed separately (via `ug skill` /
+`ug configure skills`) and aren't listed here. It reads local state plus each installed agent's
+`mcp list`, so it needs no Databricks login.
+
 ### Skills (optional)
 
 Configure Unity Catalog Skills for your coding tools with `ug configure skills`:
@@ -416,6 +436,8 @@ The output looks like:
 | `ug mcp add --agents claude --services system.ai.slack` | Set up the agent(s) if needed and register the server for them |
 | `ug mcp remove` | Interactively unregister configured MCP servers from your coding tools |
 | `ug mcp remove --agents codex` | Unregister selected servers from specific agents only |
+| `ug mcp list` | List configured MCP servers and their live per-agent connection status |
+| `ug mcp list --agents claude` | Show the connection-status report for specific agents only |
 | `ug configure skills` | Register the skills MCP connection (utility tools only); no skills download |
 | `ug configure skills --location main.default [--path <dir>]` | Download a schema's skills to disk (under `<dir>`, or your home dir) and register a schema-less skills MCP connection |
 | `ug configure skills --skill main.default.my-skill` | Download named skills by fully-qualified name (comma-separated; may span schemas) |

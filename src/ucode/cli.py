@@ -105,6 +105,7 @@ from ucode.mcp import (
     configure_skills_mcp_command,
     configure_skills_mcp_picker_command,
     configured_mcp_clients,
+    list_mcp_command,
     purge_cross_workspace_mcp_residue,
     reconcile_managed_mcp_servers,
     remove_mcp_command,
@@ -906,7 +907,8 @@ def status() -> int:
     state = load_state()
     workspace = state.get("workspace")
     managed_configs = state.get("managed_configs") or {}
-    mcp_servers = state.get("mcp_servers") or []
+    # Both developer- and workspace-managed servers, so the count agrees with `ug mcp list`.
+    mcp_servers = (state.get("mcp_servers") or []) + (state.get("managed_mcp_servers") or [])
     configured_tools = set(state.get("available_tools") or managed_configs.keys())
 
     console.print(heading("ug status"))
@@ -941,18 +943,17 @@ def status() -> int:
             print_kv("Model Provider Service", provider_service)
         print_kv("Base URL", base_url)
         if configured and tool in MCP_CLIENTS:
-            tool_mcp_servers = [
-                str(server.get("name"))
+            # High-level overview: just a count per agent. `ug mcp list` (see the note below) shows
+            # the per-server detail and live connection status, so status stays scannable. Dedupe by
+            # name so a server present in both mcp_servers and managed_mcp_servers isn't double-counted.
+            mcp_names = {
+                server.get("name")
                 for server in mcp_servers
                 if tool in (server.get("clients") or [])
                 and server.get("name")
                 and server.get("kind") != SKILLS_MCP_KIND
-            ]
-            print_kv("MCP list command", str(MCP_CLIENTS[tool]["list_command"]))
-            print_kv(
-                "MCP servers",
-                ", ".join(tool_mcp_servers) if tool_mcp_servers else "none saved by ug",
-            )
+            }
+            print_kv("MCP servers", str(len(mcp_names)))
         print_kv("Config file", str(config_path) if config_path.exists() else "missing")
         if tool == "claude":
             managed_path, managed_status, backup_status = claude_agent.managed_settings_status(
@@ -997,6 +998,7 @@ def status() -> int:
     print_kv("State file", str(STATE_PATH) if STATE_PATH.exists() else "missing")
     print_note("Use `ug configure` to update workspace settings or configure new tools.")
     print_note("Use `ug configure mcp` to add Databricks MCP servers to configured coding tools.")
+    print_note("Use `ug mcp list` to see configured MCP servers and their connection status.")
     print_note(
         "Use `ug configure skills` to set up Unity Catalog Skills for configured coding tools."
     )
@@ -1057,7 +1059,11 @@ app = typer.Typer(
 configure_app = typer.Typer(add_completion=False, no_args_is_help=False)
 app.add_typer(configure_app, name="configure", help="Configure workspace and tool settings.")
 mcp_app = typer.Typer(add_completion=False, no_args_is_help=True)
-app.add_typer(mcp_app, name="mcp", help="MCP servers exposed by ug.")
+app.add_typer(
+    mcp_app,
+    name="mcp",
+    help="Inspect and manage the Databricks MCP servers ug configures for your coding agents.",
+)
 skill_app = typer.Typer(add_completion=False, no_args_is_help=True)
 app.add_typer(skill_app, name="skills", help="Databricks Skills for your coding tools.")
 
@@ -1186,6 +1192,38 @@ def mcp_remove(
     )
     try:
         remove_mcp_command(agents=requested_agents)
+    except RuntimeError as exc:
+        print_err(str(exc))
+        raise typer.Exit(1) from None
+    except KeyboardInterrupt:
+        print_err("Interrupted.")
+        raise typer.Exit(130) from None
+
+
+@mcp_app.command("list")
+def mcp_list(
+    agents: Annotated[
+        str | None,
+        typer.Option(
+            "--agents",
+            help="Comma-separated coding agents to report on (e.g. claude,codex). Without "
+            "--agents, every installed MCP-capable agent is included.",
+        ),
+    ] = None,
+) -> None:
+    """List the Databricks MCP servers ug has configured and their live connection status.
+
+    Reads ug's saved state and each installed agent's own `mcp list` to show, per agent, whether
+    each server is connected. Read-only; needs no Databricks login. Use the `add`/`remove`
+    subcommands to change what's configured.
+    """
+    requested_agents = (
+        None
+        if agents is None
+        else ({a.strip().lower() for a in agents.split(",") if a.strip()} or None)
+    )
+    try:
+        list_mcp_command(agents=requested_agents)
     except RuntimeError as exc:
         print_err(str(exc))
         raise typer.Exit(1) from None
