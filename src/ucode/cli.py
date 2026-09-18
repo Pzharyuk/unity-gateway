@@ -119,7 +119,7 @@ from ucode.skills_download import (
     configure_location_skills_download_command,
     configure_selected_skills_download_command,
     configure_skills_download_picker_command,
-    download_managed_skills_on_launch,
+    reconcile_managed_skills,
     remove_downloaded_skills_command,
 )
 from ucode.skills_list import list_configured_skills_command
@@ -834,6 +834,7 @@ def configure_workspace_command(
             )
         if not is_dry_run():
             _configure_managed_mcp_servers(managed)
+            _configure_managed_skills(managed)
         _summarize_managed_config(managed, state["workspace"])
         return 0
 
@@ -883,10 +884,11 @@ def configure_workspace_command(
     else:
         state = configure_selected_tools(state, picked)
 
-    # This workspace has no managed config, so unregister any MCP servers a prior managed
-    # workspace registered — otherwise switching workspaces leaves the old registry behind.
+    # No managed config here: undo what a prior managed workspace left behind (its MCP servers and
+    # skills), so switching workspaces doesn't strand the old registry and skills.
     if not is_dry_run():
         _configure_managed_mcp_servers(None)
+        _configure_managed_skills(None)
 
     summary_lines = [f"[bold]Workspace:[/bold] [cyan]{state['workspace']}[/cyan]"]
     for tool_name in picked:
@@ -2145,35 +2147,24 @@ def _configure_managed_mcp_servers(managed: dict | None) -> None:
         print_note(f"Registered workspace MCP server(s): {names}")
 
 
-def _managed_skill_locations(managed: dict) -> list[str]:
-    """The ``<catalog>.<schema>`` skill locations the admin published, or ``[]``."""
-    return [
-        loc
-        for loc in ((managed.get("skills") or {}).get("names") or [])
-        if isinstance(loc, str) and loc
-    ]
+def _configure_managed_skills(managed: dict | None) -> None:
+    """Download and reconcile the managed config's skills for every agent's ``/skills`` picker.
 
-
-def _download_managed_skills(managed: dict, state: dict) -> None:
-    """Download the admin-published skill schemas to disk (user scope).
-
-    Managed skills are delivered by download only. The agent's ``/skills`` picker reads skill bundles
-    from ``~/.claude/skills`` / ``~/.agents/skills`` on disk, so without this download a
-    workspace-published skill never shows up in ``/skills``. Skills already on disk are left
-    untouched, so a steady-state launch only lists each schema and writes nothing. Best-effort: a
-    failure here never blocks the launch.
+    Mirrors :func:`_configure_managed_mcp_servers`: runs during ``ug configure`` after the enabled
+    agents are configured, so a workspace-published skill reaches ``.claude/skills`` and
+    ``.agents/skills`` (both agents) without the developer downloading it. ``managed`` is None when
+    the current workspace has no config: the reconcile then removes any managed skills a prior
+    workspace left behind. Best-effort: a failure warns and leaves the rest of configure intact.
     """
-    locations = _managed_skill_locations(managed)
-    if not locations:
-        return
     try:
-        token = get_databricks_token(state["workspace"], state.get("profile"))
-        written = download_managed_skills_on_launch(state["workspace"], token, locations)
-    except RuntimeError as exc:
-        print_warning(f"Could not download your workspace's skills: {exc}")
+        written, removed = reconcile_managed_skills(managed or {})
+    except (RuntimeError, OSError) as exc:
+        print_warning(f"Could not sync your workspace's skills: {exc}")
         return
     if written:
-        print_note(f"Downloaded workspace skill(s) to disk: {', '.join(written)}")
+        print_note(f"Downloaded workspace skill(s): {', '.join(written)}")
+    if removed:
+        print_note(f"Removed workspace skill(s) no longer configured: {', '.join(removed)}")
 
 
 def _child_owns_stdout(tool: str, tool_args: list[str]) -> bool:
@@ -2512,11 +2503,8 @@ def _launch_tool(
             )
         if recommendation is not None:
             _print_budget_panel(recommendation, tool, managed)
-        # Download the managed config's skills so they reach the agent's `/skills` picker. MCP
-        # servers are registered at `ug configure`, not here. Skipped on --dry-run, which writes
-        # nothing.
-        if managed is not None and not is_dry_run():
-            _download_managed_skills(managed, state)
+        # The managed config's MCP servers and skills are both applied at `ug configure`, not here,
+        # so the launch hot path makes no per-launch discovery calls for them.
         if tool == "claude":
             if provider:
                 state["_claude_launch_provider"] = provider
