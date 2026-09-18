@@ -9,8 +9,8 @@ real `rfile`, the pooled `httpx` client streaming to a real upstream and back,
 and `_relay_response` writing to a real `wfile`.
 
 These tests stand up a fake AI Gateway upstream, start the *real* proxy via
-`start_proxy` pointed at it (patching only the Databricks token mint), and drive
-it with a real HTTP client — so a regression anywhere in that chain is caught.
+`start_relay_proxy` pointed at it, and drive it with a real HTTP client — so a
+regression anywhere in that chain is caught.
 Fully hermetic: no agent binary, no network, no workspace credentials.
 """
 
@@ -126,31 +126,26 @@ def make_gateway():
 
 
 def _counting_token(value: str = "dbx-swap-token"):
-    """A get_databricks_token stand-in that records the force flag of each mint.
+    """A token_provider stand-in that records the force flag of each mint.
 
     Returns a plain (non-JWT) token, so `_jwt_exp` yields None and the cache falls
     back to the default TTL — the background refresher then never re-mints, keeping
     the mint count deterministic (one on init, one per forced retry-refresh)."""
     calls: list[bool] = []
 
-    def fn(_workspace, _profile, force_refresh=False):
+    def provider(force_refresh: bool = False) -> str:
         calls.append(force_refresh)
         return value
 
-    fn.calls = calls  # type: ignore[attr-defined]
-    return fn
+    provider.calls = calls  # type: ignore[attr-defined]
+    return provider
 
 
 @contextlib.contextmanager
-def _running_proxy(gateway: _FakeGateway, monkeypatch, token_fn=None):
-    """Start the real proxy pointed at `gateway`, yield its loopback URL, tear down."""
-    monkeypatch.setattr(gateway_proxy, "get_databricks_token", token_fn or _counting_token())
-    server, cache, client = gateway_proxy.start_proxy(
-        gateway.base_url,
-        None,
-        0,
-        token_header=gateway_proxy.AI_GATEWAY_TOKEN_HEADER,
-        force_refresh_near_expiry=False,
+def _running_proxy(gateway: _FakeGateway, token_provider=None):
+    """Start the real relay proxy pointed at `gateway`, yield its URL, then tear down."""
+    server, cache, client = gateway_proxy.start_relay_proxy(
+        gateway.base_url, token_provider or _counting_token(), 0
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -165,13 +160,13 @@ def _running_proxy(gateway: _FakeGateway, monkeypatch, token_fn=None):
 
 
 class TestRelayedProxyEndToEnd:
-    def test_forwards_request_with_swap_header_and_passthrough(self, make_gateway, monkeypatch):
+    def test_forwards_request_with_swap_header_and_passthrough(self, make_gateway):
         # The whole relayed data-plane over real sockets: the proxy injects a fresh
         # swap token, passes the caller's Anthropic OAuth + the MPS routing header
         # through untouched, forwards the body verbatim, and composes the upstream
         # path under /ai-gateway/anthropic/.
         gw = make_gateway()
-        with _running_proxy(gw, monkeypatch, _counting_token("swap-tok")) as proxy_url:
+        with _running_proxy(gw, _counting_token("swap-tok")) as proxy_url:
             resp = httpx.post(
                 f"{proxy_url}/v1/messages",
                 headers={
@@ -191,13 +186,13 @@ class TestRelayedProxyEndToEnd:
         assert req.header("Databricks-Model-Provider-Service") == "main.mcao.anthropic-mps"
         assert req.body == b'{"model":"claude","stream":true}'
 
-    def test_streams_sse_chunks_back_in_order(self, make_gateway, monkeypatch):
+    def test_streams_sse_chunks_back_in_order(self, make_gateway):
         # A relayed model turn streams SSE; the proxy must relay chunks through
         # rather than buffering the whole response. Assert the client receives the
         # full stream, in order, over a real socket.
         chunks = [b"event: a\ndata: 1\n\n", b"event: b\ndata: 2\n\n", b"event: c\ndata: 3\n\n"]
         gw = make_gateway(chunks=chunks, sse_delay=0.02)
-        with _running_proxy(gw, monkeypatch) as proxy_url:
+        with _running_proxy(gw) as proxy_url:
             with httpx.Client(timeout=10) as client:
                 with client.stream(
                     "POST",
@@ -209,14 +204,14 @@ class TestRelayedProxyEndToEnd:
                     body = b"".join(resp.iter_raw())
         assert body == b"".join(chunks)
 
-    def test_upstream_401_triggers_refresh_and_relays_over_socket(self, make_gateway, monkeypatch):
+    def test_upstream_401_triggers_refresh_and_relays_over_socket(self, make_gateway):
         # A 401 may be a stale swap token, so the proxy force-refreshes and retries
         # once; when the retry still 401s it's genuinely the Anthropic layer and the
         # 401 is relayed verbatim (Claude Code then re-auths Anthropic). Exercised
         # here end-to-end over real sockets, not just the _handle fake path.
         token_fn = _counting_token("swap-tok")
         gw = make_gateway(status=401, chunks=[b'{"type":"error"}'])
-        with _running_proxy(gw, monkeypatch, token_fn) as proxy_url:
+        with _running_proxy(gw, token_fn) as proxy_url:
             resp = httpx.post(
                 f"{proxy_url}/v1/messages",
                 headers={"Authorization": "Bearer oauth"},
