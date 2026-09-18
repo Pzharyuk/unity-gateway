@@ -2631,6 +2631,51 @@ class TestRegisterSchemalessSkillsConnection:
 
         assert _find_skills(state["mcp_servers"])[0]["skill_locations"] == ["X.x", "Y.y"]
 
+    def test_download_path_suppresses_summary(self, monkeypatch, capsys):
+        self._stub(monkeypatch)
+        state = _skills_state([])
+
+        mcp.register_schemaless_skills_connection(state, WS, None, ["claude"], print_summary=False)
+
+        assert _unwrap(capsys.readouterr().out) == ""
+
+
+class TestConfigureBareSkillsMcpCommand:
+    def _stub(self, monkeypatch, state):
+        _stub_location_base(monkeypatch, state)
+        saved_states: list[dict] = []
+        configured: list[str] = []
+        monkeypatch.setattr(
+            mcp, "configure_client_mcp_server", lambda client, *a, **kw: configured.append(client)
+        )
+        monkeypatch.setattr(mcp, "save_state", lambda state: saved_states.append(state.copy()))
+        return saved_states, configured
+
+    def test_first_run_registers_bare_route_and_reports_first_time(self, monkeypatch, capsys):
+        saved_states, configured = self._stub(monkeypatch, _skills_state())
+
+        assert mcp.configure_bare_skills_mcp_command() is True
+
+        skills = _find_skills(saved_states[-1]["mcp_servers"])
+        assert len(skills) == 1
+        assert skills[0]["skill_locations"] == []
+        assert configured == ["claude"]
+        # Only the first run prints: the setup header plus the connection summary.
+        out = _unwrap(capsys.readouterr().out)
+        assert "Configuring for: Claude Code" in out
+        assert "Skills MCP registered" in out
+
+    def test_existing_connection_reregisters_and_reports_not_first_time(self, monkeypatch, capsys):
+        prior = mcp._resolve_skills_mcp_servers(WS, ["claude"], _by_client(["claude"], []), [])
+        _, configured = self._stub(monkeypatch, _skills_state(prior))
+
+        assert mcp.configure_bare_skills_mcp_command() is False
+
+        # A repeat run re-registers silently: no client re-touched, and no output at all
+        # (neither the setup header nor the connection summary).
+        assert configured == []
+        assert _unwrap(capsys.readouterr().out) == ""
+
 
 class TestSkillsToolsDescription:
     def test_bare_route_names_utility_tools_only(self):
