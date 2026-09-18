@@ -122,6 +122,7 @@ from ucode.skills_download import (
     download_managed_skills_on_launch,
     remove_downloaded_skills_command,
 )
+from ucode.skills_list import list_configured_skills_command
 from ucode.smart_routing import v2 as smart_routing_v2
 from ucode.smart_routing.claude_hooks import FIRST_PROMPT_SOCKET_ENV, ROUTE_FIRST_PROMPT_EVENT
 from ucode.state import (
@@ -1341,6 +1342,20 @@ def _stdin_is_interactive() -> bool:
     import sys
 
     return sys.stdin.isatty()
+
+
+@skill_app.command("list")
+def skills_list() -> None:
+    """List the skills configured for your coding tools and how each was configured."""
+    try:
+        install_databricks_cli(minimum=SKILLS_MCP_MIN_DATABRICKS_CLI_VERSION)
+        list_configured_skills_command()
+    except (RuntimeError, ValueError) as exc:
+        print_err(str(exc))
+        raise typer.Exit(1) from None
+    except KeyboardInterrupt:
+        print_err("Interrupted.")
+        raise typer.Exit(130) from None
 
 
 @skill_app.command("add")
