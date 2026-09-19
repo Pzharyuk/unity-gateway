@@ -89,11 +89,8 @@ CLAUDE_MCP_CONFIG_PATH = Path.home() / ".claude.json"
 CLAUDE_USER_SETTINGS_PATH = CLAUDE_CONFIG_DIR / "settings.json"
 CLAUDE_BACKUP_PATH = APP_DIR / "claude-ucode-settings.backup.json"
 WEB_SEARCH_MCP_STATE_KEY = "claude_web_search_mcp"
-MINIMUM_CLAUDE_VERSION = (2, 1, 248)
-MINIMUM_CLAUDE_VERSION_TEXT = "2.1.248"
-# managedMcpServers needs Claude Code 2.1.259+; older versions ignore it and fall back to user scope.
-MANAGED_MCP_MIN_VERSION = (2, 1, 259)
-MANAGED_MCP_MIN_VERSION_TEXT = "2.1.259"
+MINIMUM_CLAUDE_VERSION = (2, 1, 259)
+MINIMUM_CLAUDE_VERSION_TEXT = "2.1.259"
 MANAGED_MCP_SETTINGS_KEY = "managedMcpServers"
 
 SPEC: ToolSpec = {
@@ -116,25 +113,15 @@ def _parse_version(value: str) -> tuple[int, int, int] | None:
     return int(major), int(minor), int(patch)
 
 
-def _minimum_version_requirement_message(version: str) -> str:
-    feature = "Smart routing" if smart_routing_v2.smart_routing_enabled() else "Model discovery"
-    return (
-        f"{feature} requires Claude Code {MINIMUM_CLAUDE_VERSION_TEXT} or newer. "
-        f"Your current version is Claude Code {version}."
-    )
-
-
 def minimum_version_error() -> str | None:
-    if (
-        os.environ.get(GATEWAY_MODEL_DISCOVERY_ENV_VAR) != "1"
-        and not smart_routing_v2.smart_routing_enabled()
-    ):
-        return None
     version = agent_version(SPEC["binary"])
     parsed = _parse_version(version)
     if parsed is None or parsed >= MINIMUM_CLAUDE_VERSION:
         return None
-    return _minimum_version_requirement_message(version)
+    return (
+        f"ug requires Claude Code {MINIMUM_CLAUDE_VERSION_TEXT} or newer. "
+        f"Your current version is Claude Code {version}."
+    )
 
 
 def _resolve_web_search_model(state: dict) -> str | None:
@@ -706,24 +693,17 @@ def remove_claude_mcp_server(name: str, scope: str) -> bool:
         raise RuntimeError(f"Failed to remove MCP server '{name}' via claude CLI.") from exc
 
 
-def _version_supports_managed_mcp() -> bool:
-    parsed = _parse_version(agent_version(SPEC["binary"]))
-    return parsed is not None and parsed >= MANAGED_MCP_MIN_VERSION
-
-
 def managed_mcp_uses_managed_file(workspace: str, *, use_pat: bool) -> bool:
     """Whether Claude's managed MCP servers belong in the OS-managed file rather than user scope.
 
     The OS-managed ``managedMcpServers`` key is additive (it never touches the developer's own
-    servers) but Claude Code reads it only from a real managed source, only since 2.1.259, and only
-    as a remote HTTP server it can drive OAuth against itself. So it fits only when the platform
-    supports the sudo reconcile, the run is interactive, the CLI is new enough, the developer is not
-    on PAT auth (which needs the stdio proxy), and the workspace publishes the ``claude-code`` OAuth
-    client. Every other case falls back to the user-scope registration."""
+    servers) but Claude Code reads it only from a real managed source, and only as a remote HTTP
+    server it can drive OAuth against itself. So it fits only when the platform supports the sudo
+    reconcile, the run is interactive, the developer is not on PAT auth (which needs the stdio
+    proxy), and the workspace publishes the ``claude-code`` OAuth client. Every other case falls back to the user-scope registration."""
     return (
         managed_files_supported()
         and managed_writes_allowed()
-        and _version_supports_managed_mcp()
         and not use_pat
         and oauth_client_available(workspace, CLAUDE_CODE_OAUTH_CLIENT_ID)
     )
