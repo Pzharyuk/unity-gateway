@@ -729,30 +729,30 @@ class TestSubcommandRouting:
         assert "Model: system.ai.gpt-5-6-luna" not in output
         assert mock_launch.call_args.args[2] == forwarded_args
 
-    def test_claude_enable_model_discovery_sets_ucode_env(self):
-        with patch("ucode.cli._launch_tool") as mock_launch:
-            result = runner.invoke(app, ["claude", "--enable-model-discovery"])
+    def test_unmanaged_claude_launch_enables_model_discovery(self):
+        with _launch_policy_patches(None) as calls:
+            result = runner.invoke(app, ["claude"])
 
         assert result.exit_code == 0, result.output
         assert os.environ["ENABLE_CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY"] == "1"
-        assert mock_launch.call_args.args[1].args == []
+        calls["launch"].assert_called_once()
 
     def test_claude_model_location_is_forwarded(self):
-        with patch("ucode.cli._launch_tool") as mock_launch:
+        with _launch_policy_patches(None) as calls:
             result = runner.invoke(app, ["claude", "--model-location", "main.default"])
 
         assert result.exit_code == 0, result.output
-        assert mock_launch.call_args.kwargs["parent_schema"] == "main.default"
-        assert mock_launch.call_args.args[1].args == []
+        assert calls["configure"].call_args.kwargs["parent_schema"] == "main.default"
+        assert calls["launch"].call_args.args[2] == []
         assert os.environ["ENABLE_CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY"] == "1"
 
     def test_claude_provider_enables_model_discovery(self):
-        with patch("ucode.cli._launch_tool") as mock_launch:
+        with _launch_policy_patches(None) as calls:
             result = runner.invoke(app, ["claude", "--provider", "main.default.anthropic"])
 
         assert result.exit_code == 0, result.output
-        assert mock_launch.call_args.kwargs["provider"] == "main.default.anthropic"
-        assert mock_launch.call_args.args[1].args == []
+        assert calls["configure"].call_args.kwargs["provider"] == "main.default.anthropic"
+        assert calls["launch"].call_args.args[2] == []
         assert os.environ["ENABLE_CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY"] == "1"
 
     def test_codex_model_location_is_forwarded(self):
@@ -802,12 +802,6 @@ class TestSubcommandRouting:
 
         assert result.exit_code == 1
         assert "--model-location must be `<catalog>.<schema>`." in _strip_ansi(result.output)
-
-    def test_claude_enable_model_discovery_is_hidden_from_help(self):
-        result = runner.invoke(app, ["claude", "--help"])
-
-        assert result.exit_code == 0, result.output
-        assert "--enable-model-discovery" not in result.output
 
     def test_codex_disable_removes_hooks_without_launching(self):
         with (
@@ -1027,6 +1021,19 @@ class TestManagedConfigLaunchSourceGuard:
 
 
 class TestManagedClaudeModelDiscovery:
+    def test_managed_static_models_do_not_enable_discovery(self):
+        managed = {
+            "enabled_agents": {
+                "claude": {"model_config": {"model_services": ["system.ai.claude-sonnet-5"]}}
+            }
+        }
+        with _launch_policy_patches(managed) as calls:
+            result = runner.invoke(app, ["claude"])
+
+        assert result.exit_code == 0, result.output
+        calls["launch"].assert_called_once()
+        assert "ENABLE_CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY" not in os.environ
+
     MPS_CONFIG = {
         "enabled_agents": {
             "claude": {
