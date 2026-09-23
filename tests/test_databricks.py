@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 from decimal import Decimal
 from urllib.parse import parse_qs
@@ -3726,3 +3727,99 @@ class TestBearerCommand:
 
         assert db_mod.has_valid_databricks_auth(WS) is True
         assert not marker.exists()
+
+
+class TestWalkCatalogSchemasCancellation:
+    def _fake_paginated(self, n_schemas):
+        def impl(url, token, *, items_key, extra_params=None, **kwargs):
+            if items_key == "catalogs":
+                return [{"name": "main"}], None
+            if items_key == "schemas":
+                return [{"name": f"s{i}"} for i in range(n_schemas)], None
+            return [], None
+
+        return impl
+
+    def test_cancel_event_stops_walk_during_probing(self, monkeypatch):
+        N = 50
+        monkeypatch.setattr(db_mod, "_paginated_json_items", self._fake_paginated(N))
+
+        cancel_event = threading.Event()
+        probe_calls: list[tuple[str, str]] = []
+
+        def slow_probe(cat, schema):
+            probe_calls.append((cat, schema))
+            cancel_event.set()
+            time.sleep(0.2)
+            return f"{cat}.{schema}"
+
+        collected = []
+        start = time.monotonic()
+        db_mod.walk_catalog_schemas(
+            WS,
+            "tok",
+            deadline=start + 60.0,
+            probe=slow_probe,
+            collect=lambda result, done, total: collected.append(result),
+            cancel_event=cancel_event,
+        )
+        assert probe_calls
+        assert len(probe_calls) < N
+        assert time.monotonic() - start < 5.0
+
+    def test_deadline_stops_walk_promptly(self, monkeypatch):
+        N = 50
+        monkeypatch.setattr(db_mod, "_paginated_json_items", self._fake_paginated(N))
+
+        collected = []
+
+        def slow_probe(cat, schema):
+            time.sleep(0.5)
+            return f"{cat}.{schema}"
+
+        start = time.monotonic()
+        db_mod.walk_catalog_schemas(
+            WS,
+            "tok",
+            deadline=start + 0.1,
+            probe=slow_probe,
+            collect=lambda result, done, total: collected.append(result),
+        )
+        assert time.monotonic() - start < 1.5
+        assert len(collected) < N
+
+    def test_all_probes_collected_on_full_success(self, monkeypatch):
+        N = 20
+        monkeypatch.setattr(db_mod, "_paginated_json_items", self._fake_paginated(N))
+
+        collected = []
+        reason = db_mod.walk_catalog_schemas(
+            WS,
+            "tok",
+            deadline=time.monotonic() + 60.0,
+            probe=lambda cat, schema: f"{cat}.{schema}",
+            collect=lambda result, done, total: collected.append(result),
+        )
+        assert reason is None
+        assert len(collected) == N
+
+    def test_raising_probes_are_skipped_not_stalled(self, monkeypatch):
+        N = 10
+        monkeypatch.setattr(db_mod, "_paginated_json_items", self._fake_paginated(N))
+
+        def probe(cat, schema):
+            if int(schema[1:]) % 2 == 0:
+                raise RuntimeError("probe failure")
+            return f"{cat}.{schema}"
+
+        collected = []
+        reason = db_mod.walk_catalog_schemas(
+            WS,
+            "tok",
+            deadline=time.monotonic() + 60.0,
+            probe=probe,
+            collect=lambda result, done, total: collected.append(result),
+        )
+        assert reason is None
+        assert len(collected) == N // 2
+        assert all("." in r for r in collected)
