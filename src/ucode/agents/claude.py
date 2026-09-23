@@ -51,6 +51,7 @@ from ucode.managed_files import (
     ManagedFileSnapshots,
     ManagedFileWriteUnavailable,
     current_os,
+    managed_conflict_message,
     managed_file_conflicts,
     managed_file_is_verified,
     managed_file_scope,
@@ -1285,12 +1286,7 @@ def _reconcile_managed_settings(
     if not managed_writes_allowed():
         conflicts = managed_file_conflicts(managed_before, desired_settings, owned_paths)
         if conflicts:
-            raise RuntimeError(
-                "Claude Code configuration cannot be applied non-interactively because "
-                f"OS-managed settings at {path} override ucode values: {', '.join(conflicts)}. "
-                "Run `ucode configure --agent claude` from an interactive terminal or contact "
-                "your administrator."
-            )
+            raise RuntimeError(managed_conflict_message("Claude Code", "claude", path, conflicts))
         mark_managed_file_verified(state, "claude", path, scope="local-compatible")
         return
     try:

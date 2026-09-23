@@ -36,6 +36,21 @@ remain local-only.
 This is a new shared ucode distinction. The previous implementation inferred interactivity from
 command shape in some flows and did not guard managed-file writes consistently.
 
+## Opting Out
+
+Set `UCODE_DISABLE_MANAGED_SETTINGS=1` (also `true`, `yes`, or `on`) when OS-managed settings are
+deployed and maintained by device management or other administrator tooling rather than by ucode.
+Every invocation then follows the non-interactive rows of the behavior matrix, even from a TTY:
+
+- `ucode configure`, `ucode claude`, and `ucode codex` never create, update, or reconcile the
+  OS-managed file, never request administrator access, and always use the local ucode file.
+- An existing managed file is still read so precedence stays deterministic. Compatible files are
+  left untouched; a file whose ucode-owned values conflict stops the command with an error naming
+  the opt-out.
+- Managed MCP servers use the user-scope registration instead of the managed file.
+- `ucode revert` does not restore the managed file and retains any existing backup, so a later
+  revert without the opt-out can still restore it.
+
 ## Behavior Matrix
 
 | Invocation | Managed file | Behavior |
@@ -124,7 +139,8 @@ If ucode cannot complete a write or revert, the backup remains available for a l
 - Preserve externally changed values rather than replacing them with stale baseline values.
 - Refuse an unsafe or unparsable merge and retain the backup.
 
-A revert that needs to change an OS-managed file must run interactively. A successful revert removes
+A revert that needs to change an OS-managed file must run interactively, and is skipped while
+`UCODE_DISABLE_MANAGED_SETTINGS` is set. A successful revert removes
 that agent's backup record. The existing local configuration and ucode state cleanup still occur as
 part of the command.
 

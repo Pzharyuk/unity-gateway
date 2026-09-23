@@ -1576,6 +1576,39 @@ class TestWriteToolConfigManagedSettings:
 
         assert managed_writes == []
 
+    def _disable_managed_settings_on_a_tty(self, monkeypatch):
+        # Use the real gate so the env var, not a stub, is what blocks the managed write.
+        monkeypatch.setattr(managed_files.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr(claude, "managed_writes_allowed", managed_files.managed_writes_allowed)
+        monkeypatch.setenv(managed_files.DISABLE_MANAGED_SETTINGS_ENV, "1")
+
+    def test_disable_env_uses_local_settings_on_a_tty(self, monkeypatch):
+        private_writes: list = []
+        managed_writes: list = []
+        self._patch(monkeypatch, private_writes, managed_writes)
+        self._disable_managed_settings_on_a_tty(monkeypatch)
+        state = {"workspace": WS, "codex_models": []}
+
+        claude.write_tool_config(state, "databricks-claude-sonnet-4")
+
+        assert managed_writes == []
+        assert any(path == str(claude.CLAUDE_SETTINGS_PATH) for path, _ in private_writes)
+
+    def test_disable_env_reports_conflicting_managed_file_without_writing(self, monkeypatch):
+        private_writes: list = []
+        managed_writes: list = []
+        existing = {
+            str(FAKE_MANAGED_PATH): {"env": {"ANTHROPIC_BASE_URL": "https://other.example.com"}}
+        }
+        self._patch(monkeypatch, private_writes, managed_writes, existing)
+        self._disable_managed_settings_on_a_tty(monkeypatch)
+        state = {"workspace": WS, "codex_models": []}
+
+        with pytest.raises(RuntimeError, match="UCODE_DISABLE_MANAGED_SETTINGS is set"):
+            claude.write_tool_config(state, "databricks-claude-sonnet-4")
+
+        assert managed_writes == []
+
     def test_noninteractive_fails_when_managed_file_conflicts(self, monkeypatch):
         private_writes: list = []
         managed_writes: list = []
