@@ -58,12 +58,14 @@ from ucode.managed_files import (
     SettingsPassthrough,
     apply_settings_passthrough,
     current_os,
+    managed_conflict_message,
     managed_file_conflicts,
     managed_file_is_verified,
     managed_file_scope,
     managed_file_snapshots,
     managed_file_status,
     managed_files_supported,
+    managed_settings_disabled,
     managed_writes_allowed,
     mark_managed_file_verified,
     plan_settings_passthrough,
@@ -1843,6 +1845,8 @@ def _reconcile_managed_settings(
     desired_settings = compose(existing)
     _preserve_permission_denies(managed_before, desired_settings, withdrawn=withdrawn_denies or [])
     conflicts = _managed_settings_conflicts(managed_before, desired_settings, owned_paths)
+    if managed_settings_disabled() and conflicts:
+        raise RuntimeError(managed_conflict_message("Claude Code", "claude", path, conflicts))
     if not managed_writes_allowed() and not conflicts:
         mark_managed_file_verified(state, "claude", path, scope="local-compatible")
         return

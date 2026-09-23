@@ -2185,6 +2185,39 @@ class TestWriteToolConfigManagedSettings:
 
         assert managed_writes == []
 
+    def _disable_managed_settings_on_a_tty(self, monkeypatch):
+        # Use the real gate so the env var, not a stub, is what blocks the managed write.
+        monkeypatch.setattr(managed_files.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr(claude, "managed_writes_allowed", managed_files.managed_writes_allowed)
+        monkeypatch.setenv(managed_files.DISABLE_MANAGED_SETTINGS_ENV, "1")
+
+    def test_disable_env_uses_local_settings_on_a_tty(self, monkeypatch):
+        private_writes: list = []
+        managed_writes: list = []
+        self._patch(monkeypatch, private_writes, managed_writes)
+        self._disable_managed_settings_on_a_tty(monkeypatch)
+        state = {"workspace": WS, "codex_models": []}
+
+        claude.write_tool_config(state, "databricks-claude-sonnet-4")
+
+        assert managed_writes == []
+        assert any(path == str(claude.CLAUDE_SETTINGS_PATH) for path, _ in private_writes)
+
+    def test_disable_env_reports_conflicting_managed_file_without_writing(self, monkeypatch):
+        private_writes: list = []
+        managed_writes: list = []
+        existing = {
+            str(FAKE_MANAGED_PATH): {"env": {"ANTHROPIC_BASE_URL": "https://other.example.com"}}
+        }
+        self._patch(monkeypatch, private_writes, managed_writes, existing)
+        self._disable_managed_settings_on_a_tty(monkeypatch)
+        state = {"workspace": WS, "codex_models": []}
+
+        with pytest.raises(RuntimeError, match="UCODE_DISABLE_MANAGED_SETTINGS is set"):
+            claude.write_tool_config(state, "databricks-claude-sonnet-4")
+
+        assert managed_writes == []
+
     def test_noninteractive_repairs_conflicting_managed_settings_without_prompting(
         self, monkeypatch
     ):
@@ -2208,6 +2241,24 @@ class TestWriteToolConfigManagedSettings:
         assert written["env"]["ANTHROPIC_BASE_URL"] == f"{WS}/ai-gateway/anthropic"
         assert written["env"]["ISAAC_ONLY"] == "keep"
         assert "Read(secret.txt)" in written["permissions"]["deny"]
+
+    def test_disable_env_blocks_noninteractive_repair_of_conflicting_managed_file(
+        self, monkeypatch
+    ):
+        private_writes: list = []
+        managed_writes: list = []
+        existing = {
+            str(FAKE_MANAGED_PATH): {"env": {"ANTHROPIC_BASE_URL": "https://other.example.com"}}
+        }
+        self._patch(monkeypatch, private_writes, managed_writes, existing)
+        monkeypatch.setattr(managed_files.sys.stdin, "isatty", lambda: False)
+        monkeypatch.setattr(claude, "managed_writes_allowed", managed_files.managed_writes_allowed)
+        monkeypatch.setenv(managed_files.DISABLE_MANAGED_SETTINGS_ENV, "1")
+
+        with pytest.raises(RuntimeError, match="UCODE_DISABLE_MANAGED_SETTINGS is set"):
+            claude.write_tool_config({"workspace": WS, "codex_models": []}, None)
+
+        assert managed_writes == []
 
     def test_headless_isaac_headers_and_telemetry_are_compatible(self, monkeypatch):
         private_writes: list = []
