@@ -199,7 +199,7 @@ def managed_conflict_message(display: str, agent: str, path: Path, conflicts: li
         f"override ucode values: {', '.join(conflicts)}. {DISABLE_MANAGED_SETTINGS_ENV} is set, "
         "so ucode will not modify that file. Ask your administrator to update it, or unset "
         f"{DISABLE_MANAGED_SETTINGS_ENV} and run `ucode configure --agent {agent}` from an "
-        "interactive terminal."
+        f"interactive terminal.{created_by_ug_hint(agent, path)}"
     )
 
 
@@ -285,6 +285,26 @@ class ManagedFileSnapshots:
     ug_picker: dict | None = None
     # ``[path, value]`` leaves ug last delivered here from the admin's agent_native_settings.
     settings_passthrough: list | None = None
+
+
+def managed_file_created_by_ug(tool: str) -> bool:
+    """True when ucode's backup manifest records that ``tool``'s managed file didn't exist before
+    ucode created it, so removing the file restores the pre-ucode state."""
+    try:
+        entry = _manifest_files(_load_manifest()).get(tool)
+    except RuntimeError:
+        return False
+    return isinstance(entry, dict) and entry.get("original_existed") is False
+
+
+def created_by_ug_hint(tool: str, path: Path) -> str:
+    """Point at removing a managed file ucode itself created, the one step that unblocks it."""
+    if not managed_file_created_by_ug(tool):
+        return ""
+    return (
+        f' ucode created {path}; removing it (for example `sudo rm "{path}"`) lets ucode use '
+        "your user settings instead."
+    )
 
 
 def managed_file_snapshots(tool: str, parser: ManagedParser) -> ManagedFileSnapshots:
