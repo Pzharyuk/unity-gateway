@@ -39,6 +39,8 @@ def _managed_config_result(manifest: dict | None) -> SimpleNamespace:
 @pytest.fixture(autouse=True)
 def _avoid_real_managed_settings(monkeypatch):
     monkeypatch.setattr(claude, "_managed_settings_path", lambda: None)
+    # Never read the developer's real ~/.ucode/state.json.
+    monkeypatch.setattr(claude, "load_state", lambda: {})
 
 
 @pytest.fixture(autouse=True)
@@ -1672,7 +1674,7 @@ class TestWriteToolConfigManagedSettings:
             deny_managed_write,
         )
 
-        with pytest.raises(managed_files.ManagedFileWriteUnavailable, match="sudo denied"):
+        with pytest.raises(RuntimeError, match="could not update them without administrator"):
             claude.write_tool_config(
                 {"workspace": WS, "codex_models": []}, "databricks-claude-sonnet-4"
             )
@@ -2799,8 +2801,17 @@ class TestUserSettingsFallback:
 
     USER = str(claude.CLAUDE_USER_SETTINGS_PATH)
 
-    def _patch(self, monkeypatch, files: dict, *, sudo_ok: bool = False, allowed: bool = True):
+    def _patch(
+        self,
+        monkeypatch,
+        files: dict,
+        *,
+        sudo_ok: bool = False,
+        allowed: bool = True,
+        saved: dict | None = None,
+    ):
         managed_attempts: list[str] = []
+        saved = {} if saved is None else saved
         monkeypatch.setattr(claude, "backup_existing_file", lambda *a, **kw: True)
         monkeypatch.setattr(
             claude, "read_json_safe", lambda path: json.loads(json.dumps(files.get(str(path), {})))
@@ -2810,7 +2821,8 @@ class TestUserSettingsFallback:
             files[str(path)] = json.loads(json.dumps(payload))
 
         monkeypatch.setattr(claude, "write_json_file", write_json)
-        monkeypatch.setattr(claude, "save_state", lambda state: None)
+        monkeypatch.setattr(claude, "save_state", lambda state: saved.update(state))
+        monkeypatch.setattr(claude, "load_state", lambda: dict(saved))
         monkeypatch.setattr(claude, "_register_web_search_mcp", lambda *a, **kw: True)
         monkeypatch.setattr(claude, "managed_writes_allowed", lambda: allowed)
         monkeypatch.setattr(
@@ -2953,3 +2965,22 @@ class TestUserSettingsFallback:
         claude.write_tool_config(state, "databricks-claude-sonnet-4")
 
         assert self.USER not in files
+
+    def test_conflicting_managed_file_stops_once_then_never_prompts_again(self, monkeypatch):
+        # A managed file ug wrote earlier now overrides a new provider, and sudo is unavailable.
+        files = {str(FAKE_MANAGED_PATH): {"env": {"ANTHROPIC_BASE_URL": "https://old.example.com"}}}
+        saved: dict = {}
+        attempts = self._patch(monkeypatch, files, saved=saved)
+
+        with pytest.raises(RuntimeError, match="won't ask for the password again"):
+            claude.write_tool_config(
+                {"workspace": WS, "codex_models": []}, "databricks-claude-sonnet-4"
+            )
+        assert claude.MANAGED_WRITE_UNAVAILABLE_STATE_KEY in saved
+
+        # The next launch starts from the persisted state, as a fresh `ug claude` would.
+        with pytest.raises(RuntimeError, match="administrator"):
+            claude.write_tool_config(
+                {"workspace": WS, "codex_models": [], **saved}, "databricks-claude-sonnet-4"
+            )
+        assert attempts == [str(FAKE_MANAGED_PATH)]

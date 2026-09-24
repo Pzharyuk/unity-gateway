@@ -78,7 +78,13 @@ from ucode.smart_routing.claude_hooks import (
     sync_smart_routing_hooks,
 )
 from ucode.smart_routing.routing import configured_router_name
-from ucode.state import MANAGED_OVERLAY_KEY, is_tool_managed, mark_tool_managed, save_state
+from ucode.state import (
+    MANAGED_OVERLAY_KEY,
+    is_tool_managed,
+    load_state,
+    mark_tool_managed,
+    save_state,
+)
 from ucode.telemetry import agent_version, ug_version
 from ucode.ui import print_note, print_success, print_warning
 
@@ -1308,7 +1314,7 @@ def _reconcile_managed_settings(
     if state.get(MANAGED_WRITE_UNAVAILABLE_STATE_KEY) == managed_file_fingerprint(path):
         conflicts = managed_file_conflicts(managed_before, desired_settings, owned_paths)
         if conflicts:
-            raise RuntimeError(managed_conflict_message("Claude Code", "claude", path, conflicts))
+            raise RuntimeError(_managed_write_unavailable_conflict_message(path, conflicts))
         mirror_user_settings(state, owned_paths, ucode_settings or {})
         mark_managed_file_verified(state, "claude", path, scope="local-compatible")
         return
@@ -1320,15 +1326,21 @@ def _reconcile_managed_settings(
             display="Claude Code",
             owned_paths=owned_paths,
         )
-    except ManagedFileWriteUnavailable:
+    except ManagedFileWriteUnavailable as exc:
+        fingerprint = managed_file_fingerprint(path)
+        state[MANAGED_WRITE_UNAVAILABLE_STATE_KEY] = fingerprint
         conflicts = managed_file_conflicts(managed_before, desired_settings, owned_paths)
         if conflicts:
-            raise
+            # Persist the failure before stopping, so the next launch doesn't prompt again for a
+            # write that can't happen; the rest of this configure is abandoned with the error.
+            _remember_managed_write_failure(fingerprint)
+            raise RuntimeError(
+                _managed_write_unavailable_conflict_message(path, conflicts)
+            ) from exc
         print_warning(
             f"Claude Code OS-managed settings could not be updated at {path}; continuing with "
             f"your user settings at {CLAUDE_USER_SETTINGS_PATH}. Run `ug configure` to try again."
         )
-        state[MANAGED_WRITE_UNAVAILABLE_STATE_KEY] = managed_file_fingerprint(path)
         mirror_user_settings(state, owned_paths, ucode_settings or {})
         mark_managed_file_verified(state, "claude", path, scope="local-compatible")
         return
@@ -1497,6 +1509,21 @@ def restore_user_settings_mirror(state: dict) -> bool:
     if changed:
         write_json_file(CLAUDE_USER_SETTINGS_PATH, user_settings)
     return changed
+
+
+def _remember_managed_write_failure(fingerprint: dict) -> None:
+    saved = load_state()
+    saved[MANAGED_WRITE_UNAVAILABLE_STATE_KEY] = fingerprint
+    save_state(saved)
+
+
+def _managed_write_unavailable_conflict_message(path: Path, conflicts: list[str]) -> str:
+    return (
+        f"Claude Code OS-managed settings at {path} override ucode values ({', '.join(conflicts)}) "
+        "and ucode could not update them without administrator access. Ask your administrator to "
+        "update or remove that file, or run `ug configure` again as an administrator. ucode won't "
+        "ask for the password again until then."
+    )
 
 
 def forget_managed_write_failure(state: dict) -> None:
