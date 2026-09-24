@@ -291,10 +291,14 @@ preferences are ignored and their files are left untouched. See the bundled
 
 `ug` backs up files before overwriting them. `ug revert` restores backups.
 
-The OS-managed Claude Code and Codex files are updated only from an interactive terminal and may
-prompt for your password. Set `UCODE_DISABLE_MANAGED_SETTINGS=1` when those files are maintained by
-device management instead: `ug` then never creates, updates, or restores them and always uses its
-local settings, stopping with an error only if a managed value would override them.
+Updating the OS-managed Claude Code and Codex files from an interactive terminal may prompt for
+your password; headless runs only repair an existing conflicting file, through non-prompting
+`sudo -n`. If you can't or don't approve a prompted update, `ug` writes its Claude Code gateway
+settings to `~/.claude/settings.json` instead, so a bare `claude` and the IDE extension still use the
+gateway, and it stops asking on later launches until you run `ug configure` again. `ug revert` removes
+only the entries `ug` added there. Set `UCODE_DISABLE_MANAGED_SETTINGS=1` to skip the OS-managed files
+entirely: `ug` then never creates, updates, or restores them, stopping with an error only if a managed
+value would override its settings.
 
 | Tool | Managed files |
 |------|---------------|
