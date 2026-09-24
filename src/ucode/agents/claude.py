@@ -51,6 +51,7 @@ from ucode.managed_files import (
     OS,
     ManagedFileSnapshots,
     ManagedFileWriteUnavailable,
+    created_by_ug_hint,
     current_os,
     managed_conflict_message,
     managed_file_conflicts,
@@ -1523,6 +1524,7 @@ def _managed_write_unavailable_conflict_message(path: Path, conflicts: list[str]
         "and ucode could not update them without administrator access. Ask your administrator to "
         "update or remove that file, or run `ug configure` again as an administrator. ucode won't "
         "ask for the password again until then."
+        f"{created_by_ug_hint('claude', path)}"
     )
 
 

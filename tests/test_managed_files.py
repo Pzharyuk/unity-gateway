@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -450,3 +451,15 @@ def test_disable_env_conflict_message_names_the_opt_out(monkeypatch, tmp_path):
     assert "UCODE_DISABLE_MANAGED_SETTINGS is set" in message
     assert "model_provider" in message
     assert "non-interactively" not in message
+
+
+def test_created_by_ug_hint_only_for_files_ucode_created(monkeypatch):
+    path = Path("/tmp/ucode-test/managed-settings.json")
+    manifest = {
+        "files": {"claude": {"original_existed": False}, "codex": {"original_existed": True}}
+    }
+    monkeypatch.setattr(managed_files, "_load_manifest", lambda: manifest)
+
+    assert "removing it" in managed_files.created_by_ug_hint("claude", path)
+    assert managed_files.created_by_ug_hint("codex", path) == ""
+    assert managed_files.created_by_ug_hint("gemini", path) == ""
