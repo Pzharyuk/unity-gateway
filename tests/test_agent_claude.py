@@ -2636,9 +2636,7 @@ class TestClaudeLaunch:
         settings = json.loads(calls[0][2])
         assert settings["env"]["ANTHROPIC_MODEL"] == "cat.schema.model"
 
-    def test_launch_custom_model_uses_family_aliases_without_native_model(
-        self, monkeypatch, tmp_path
-    ):
+    def test_launch_custom_model_uses_native_model(self, monkeypatch, tmp_path):
         calls: list[list[str]] = []
         monkeypatch.setenv("ANTHROPIC_MODEL", "stale-model")
         monkeypatch.setattr(claude, "get_databricks_token", lambda *_args: "token")
@@ -2653,42 +2651,45 @@ class TestClaudeLaunch:
 
         custom_model = "system.ai.claude-opus-4-8"
         claude.launch(
-            {"workspace": WS, "_claude_launch_custom_model": custom_model},
+            {"workspace": WS},
             ["--debug"],
             options=LaunchOptions(user_pinned_model=custom_model),
         )
 
-        assert os.environ["ANTHROPIC_MODEL"] == claude.CLAUDE_CUSTOM_MODEL_SELECTOR
+        assert os.environ["ANTHROPIC_MODEL"] == custom_model
         assert calls[0][0:2] == ["claude", "--settings"]
         settings = json.loads(calls[0][2])
         assert settings["model"] == saved_model
-        for family in claude.CLAUDE_CUSTOM_MODEL_FAMILIES:
-            key = claude.CLAUDE_DEFAULT_MODEL_ENV_KEYS[family]
-            assert settings["env"][key] == custom_model
-        assert "ANTHROPIC_DEFAULT_FABLE_MODEL" not in settings["env"]
-        assert "--model" not in calls[0]
-        assert calls[0][-1] == "--debug"
+        assert settings["env"] == {"USER_SETTING": "keep", "ANTHROPIC_MODEL": custom_model}
+        assert calls[0][3:] == ["--model", custom_model, "--debug"]
         assert settings_path.read_bytes() == original_settings
 
     def test_launch_custom_model_preserves_forwarded_native_model(self, monkeypatch):
         calls: list[list[str]] = []
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
         monkeypatch.setattr(claude, "get_databricks_token", lambda *_args: "token")
         monkeypatch.setattr(claude, "exec_or_spawn", lambda argv: calls.append(argv))
 
         claude.launch(
-            {"workspace": WS, "_claude_launch_custom_model": "system.ai.claude-opus-4-8"},
+            {"workspace": WS},
             ["--model", "claude-sonnet-5"],
             options=LaunchOptions(user_pinned_model="system.ai.claude-opus-4-8"),
         )
 
-        assert calls[0][-2:] == ["--model", "claude-sonnet-5"]
+        assert calls[0][3:] == ["--model", "claude-sonnet-5"]
 
     def test_launch_managed_custom_model_uses_native_model_over_stale_settings(
         self, monkeypatch, tmp_path
     ):
         calls: list[list[str]] = []
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
         settings_path = tmp_path / "settings.json"
-        settings_path.write_text(json.dumps({"model": "system.ai.claude-haiku-4-5"}))
+        original_settings = {
+            "model": "system.ai.claude-haiku-4-5",
+            "availableModels": ["system.ai.claude-opus-4-8", "system.ai.claude-haiku-4-5"],
+            "enforceAvailableModels": True,
+        }
+        settings_path.write_text(json.dumps(original_settings))
         monkeypatch.setattr(claude, "CLAUDE_SETTINGS_PATH", settings_path)
         monkeypatch.setattr(claude, "get_databricks_token", lambda *_args: "token")
         monkeypatch.setattr(claude, "exec_or_spawn", lambda argv: calls.append(argv))
@@ -2697,14 +2698,18 @@ class TestClaudeLaunch:
         claude.launch(
             {
                 "workspace": WS,
-                "_claude_launch_custom_model": custom_model,
                 "claude_static_models": ["system.ai.claude-opus-4-8", "system.ai.claude-haiku-4-5"],
             },
             [],
             options=LaunchOptions(user_pinned_model=custom_model),
         )
 
-        assert calls[0][1:3] == ["--settings", str(settings_path)]
+        assert calls[0][1] == "--settings"
+        launch_settings = json.loads(calls[0][2])
+        assert launch_settings["model"] == original_settings["model"]
+        assert launch_settings["availableModels"] == original_settings["availableModels"]
+        assert launch_settings["enforceAvailableModels"] is True
+        assert json.loads(settings_path.read_text()) == original_settings
         assert calls[0][-2:] == ["--model", custom_model]
 
     def test_launch_default_model_is_inherited_by_smart_routing(self, monkeypatch):
