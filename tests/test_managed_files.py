@@ -1401,10 +1401,15 @@ def test_disable_env_conflict_message_names_the_opt_out(monkeypatch, tmp_path):
 def test_created_by_ug_hint_only_for_files_ucode_created(monkeypatch):
     path = Path("/tmp/ucode-test/managed-settings.json")
     manifest = {
-        "files": {"claude": {"original_existed": False}, "codex": {"original_existed": True}}
+        "files": {
+            "claude": {"original_existed": False, "last_applied_file": "claude.last"},
+            "codex": {"original_existed": True, "last_applied_file": "codex.last"},
+            "declined": {"original_existed": False},
+        }
     }
     monkeypatch.setattr(managed_files, "_load_manifest", lambda: manifest)
 
     assert "removing it" in managed_files.created_by_ug_hint("claude", path)
     assert managed_files.created_by_ug_hint("codex", path) == ""
     assert managed_files.created_by_ug_hint("gemini", path) == ""
+    assert managed_files.created_by_ug_hint("declined", path) == ""

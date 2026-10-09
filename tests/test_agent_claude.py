@@ -2220,6 +2220,18 @@ class TestWriteToolConfigManagedSettings:
 
         assert managed_writes == []
 
+    def test_disable_env_treats_managed_permission_denies_as_compatible(self, monkeypatch):
+        private_writes: list = []
+        managed_writes: list = []
+        existing = {str(FAKE_MANAGED_PATH): {"permissions": {"deny": ["Bash(rm:*)"]}}}
+        self._patch(monkeypatch, private_writes, managed_writes, existing)
+        self._disable_managed_settings_on_a_tty(monkeypatch)
+        state = {"workspace": WS, "codex_models": ["databricks-gpt-5"]}
+
+        claude.write_tool_config(state, "databricks-claude-sonnet-4")
+
+        assert managed_writes == []
+
     def test_noninteractive_repairs_conflicting_managed_settings_without_prompting(
         self, monkeypatch
     ):

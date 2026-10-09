@@ -1863,8 +1863,14 @@ def _reconcile_managed_settings(
     desired_settings = compose(existing)
     _preserve_permission_denies(managed_before, desired_settings, withdrawn=withdrawn_denies or [])
     conflicts = _managed_settings_conflicts(managed_before, desired_settings, owned_paths)
-    if managed_settings_disabled() and conflicts:
-        raise RuntimeError(managed_conflict_message("Claude Code", "claude", path, conflicts))
+    # Deny lists merge across settings scopes, so a managed list never overrides the rule ug adds
+    # to user settings; only the other conflicts stop the user-settings fallback.
+    deny_key = ".".join(CLAUDE_PERMISSIONS_DENY_PATH)
+    blocking = [key for key in conflicts if key != deny_key]
+    if managed_settings_disabled():
+        if blocking:
+            raise RuntimeError(managed_conflict_message("Claude Code", "claude", path, blocking))
+        conflicts = blocking
     if not managed_writes_allowed() and not conflicts:
         if managed_settings_disabled():
             mirror_user_settings(state, owned_paths, ucode_settings or {})
@@ -1872,8 +1878,8 @@ def _reconcile_managed_settings(
         return
     # A sudo write already failed against this exact file: don't prompt again on every launch.
     if state.get(MANAGED_WRITE_UNAVAILABLE_STATE_KEY) == managed_file_fingerprint(path):
-        if conflicts:
-            raise RuntimeError(_managed_write_unavailable_conflict_message(path, conflicts))
+        if blocking:
+            raise RuntimeError(_managed_write_unavailable_conflict_message(path, blocking))
         mirror_user_settings(state, owned_paths, ucode_settings or {})
         mark_managed_file_verified(state, "claude", path, scope="local-compatible")
         return
@@ -1889,13 +1895,11 @@ def _reconcile_managed_settings(
     except ManagedFileWriteUnavailable as exc:
         fingerprint = managed_file_fingerprint(path)
         state[MANAGED_WRITE_UNAVAILABLE_STATE_KEY] = fingerprint
-        if conflicts:
+        if blocking:
             # Persist the failure before stopping, so the next launch doesn't prompt again for a
             # write that can't happen; the rest of this configure is abandoned with the error.
             _remember_managed_write_failure(fingerprint)
-            raise RuntimeError(
-                _managed_write_unavailable_conflict_message(path, conflicts)
-            ) from exc
+            raise RuntimeError(_managed_write_unavailable_conflict_message(path, blocking)) from exc
         print_warning(
             f"Claude Code OS-managed settings could not be updated at {path}; continuing with "
             f"your user settings at {CLAUDE_USER_SETTINGS_PATH}. Run `ug configure` to try again."

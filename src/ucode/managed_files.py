@@ -289,12 +289,19 @@ class ManagedFileSnapshots:
 
 def managed_file_created_by_ug(tool: str) -> bool:
     """True when ucode's backup manifest records that ``tool``'s managed file didn't exist before
-    ucode created it, so removing the file restores the pre-ucode state."""
+    ucode created it, so removing the file restores the pre-ucode state.
+
+    The backup entry is recorded before the write, so a declined or failed write leaves one with no
+    last-applied file; a file that appeared later was not created by ucode."""
     try:
         entry = _manifest_files(_load_manifest()).get(tool)
     except RuntimeError:
         return False
-    return isinstance(entry, dict) and entry.get("original_existed") is False
+    return (
+        isinstance(entry, dict)
+        and entry.get("original_existed") is False
+        and bool(entry.get("last_applied_file"))
+    )
 
 
 def created_by_ug_hint(tool: str, path: Path) -> str:
